@@ -328,7 +328,7 @@
 
   /* ---- Combat Modal ---- */
   .cbt-vs-row{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
-  .cbt-side{ flex:1; text-align:center; }
+  .cbt-side{ flex:1; text-align:center; position:relative; min-width:0; }
   .cbt-side .cbt-icon{ font-size:28px; }
   .cbt-side .cbt-name{ font-size:11px; color:var(--accent); margin-top:2px; }
   .cbt-bar-track{ height:10px; background:#100c22; border:2px solid #3a3560; margin-top:4px; position:relative; }
@@ -345,6 +345,48 @@
   .cbt-result{ text-align:center; padding:10px 0; font-size:14px; }
   .cbt-result.win{ color:var(--exp-green); }
   .cbt-result.lose{ color:var(--danger); }
+
+  /* ---- Combo & Ultimate ---- */
+  .cbt-status-row{ display:flex; gap:8px; margin:6px 0; }
+  .cbt-combo-box{ flex:1; display:flex; align-items:center; gap:6px; background:#100c22; border:2px solid #3a3560; padding:4px 8px; font-size:10px; color:var(--text-dim); }
+  .cbt-combo-box.active{ border-color:var(--gold-color); color:var(--gold-color); }
+  .cbt-combo-dots{ display:flex; gap:3px; }
+  .cbt-combo-dot{ width:8px; height:8px; border-radius:50%; background:#3a3560; border:1px solid #55507a; }
+  .cbt-combo-dot.filled{ background:var(--gold-color); box-shadow:0 0 6px var(--gold-color); }
+  .cbt-ult-box{ flex:1; }
+  .cbt-ult-track{ height:10px; background:#100c22; border:2px solid #7a4fd0; position:relative; overflow:hidden; }
+  .cbt-ult-fill{ height:100%; background:linear-gradient(180deg,#c79bff,#7a4fd0); transition:width .3s; }
+  .cbt-ult-fill.ready{ background:linear-gradient(180deg,#ffe08a,#f2b134); animation:ultPulse 1.1s infinite; }
+  @keyframes ultPulse{ 0%,100%{ filter:brightness(1); } 50%{ filter:brightness(1.5); } }
+  .cbt-ult-text{ font-size:8.5px; color:#e0c8ff; text-align:center; margin-top:1px; }
+
+  #combat-modal-box{ position:relative; overflow:visible; }
+  #combat-modal-box.shake{ animation:cbtShake .35s; }
+  @keyframes cbtShake{
+    0%,100%{ transform:translate(0,0); }
+    20%{ transform:translate(-6px,2px); }
+    40%{ transform:translate(6px,-2px); }
+    60%{ transform:translate(-4px,2px); }
+    80%{ transform:translate(4px,-1px); }
+  }
+  .cbt-flash{ position:absolute; inset:0; pointer-events:none; z-index:40; opacity:0; border-radius:4px; }
+  .cbt-flash.go{ animation:cbtFlash .4s ease-out; }
+  @keyframes cbtFlash{ 0%{ opacity:.85; } 100%{ opacity:0; } }
+
+  .cbt-dmg-num{
+    position:absolute; z-index:50; font-family:var(--font-display); font-weight:800;
+    color:#ff5555; text-shadow:2px 2px 0 #000, 0 0 8px rgba(0,0,0,.6);
+    pointer-events:none; font-size:15px; left:50%; top:40%;
+    animation:dmgFloat 1s ease-out forwards;
+  }
+  .cbt-dmg-num.crit{ font-size:22px; color:var(--gold-color); text-shadow:2px 2px 0 #000, 0 0 12px #ff9a3c; }
+  .cbt-dmg-num.heal{ color:var(--exp-green); }
+  .cbt-dmg-num.ult{ color:#c79bff; font-size:24px; text-shadow:2px 2px 0 #000, 0 0 14px #a259ff; }
+  @keyframes dmgFloat{
+    0%{ transform:translate(-50%,0) scale(.6); opacity:0; }
+    15%{ transform:translate(-50%,-14px) scale(1.15); opacity:1; }
+    100%{ transform:translate(-50%,-60px) scale(1); opacity:0; }
+  }
 
   /* ============== Bottom Nav ============== */
   #bottom-nav{ position:absolute; bottom:0; left:0; right:0; display:flex; background:linear-gradient(180deg,var(--bg-panel2),var(--bg-panel)); border-top:3px solid var(--border-gold); box-shadow:0 -4px 10px rgba(0,0,0,.4), 0 -1px 0 rgba(242,177,52,.4); z-index:10; }
@@ -1863,15 +1905,42 @@ const CBT_ARCHER_HEAL_MP = 15;
 const CBT_GUARDIAN_ABILITY_MP = 10;
 const CBT_DEFEND_MP_GAIN = 8;
 
-function spawnMonster(){
+// ---- คอมโบ & อัลติเมท ----
+const CBT_COMBO_MAX_STACK = 3;          // กดโจมตีเบาติดกันได้สูงสุด 3 ครั้งก่อนปล่อยของหนัก
+const CBT_COMBO_BONUS_PER_STACK = 0.18; // ดาเมจโบนัสของ "ตีหนัก" ต่อสเต็ปคอมโบ (+18%/สเต็ป)
+const CBT_ULT_MAX = 100;                // มิเตอร์อัลติเมทเต็มที่ 100
+const CBT_ULT_GAIN_ON_DEAL = 0.55;      // ได้พลังอัลติเมทจากดาเมจที่ทำได้ (ต่อ 1 แต้มดาเมจ)
+const CBT_ULT_GAIN_ON_TAKEN = 0.9;      // ได้พลังอัลติเมทจากดาเมจที่รับ (ต่อ 1 แต้มดาเมจ)
+
+function spawnMonster(level, forceBoss){
+  const lv = Math.max(1, level != null ? level : GameState.level);
+  const isBoss = forceBoss === true ? true : (forceBoss === false ? false : Math.random() < 0.12);
+  const tpl = isBoss ? BOSS_TEMPLATE : MONSTER_TEMPLATES[Math.floor(Math.random()*MONSTER_TEMPLATES.length)];
+  const hp = Math.round((40 + lv*18) * tpl.hpMult);
+  const atk = Math.round((6 + lv*2.4) * tpl.atkMult);
+  const def = Math.round((4 + lv*1.6) * tpl.defMult);
+  const armor = Math.round(tpl.armorBase * (1 + lv*0.06));
+  return { name:tpl.name, icon:tpl.icon, isBoss:!!tpl.isBoss, level:lv, hp, maxHp:hp, atk, def, armor, maxArmor:armor };
+}
+
+// สุ่มรูปแบบการเจอศัตรู: ปกติเจอตัวเดียว / บอสเจอตัวเดียวเสมอ / บางครั้งเจอมอนสเตอร์มาคู่กัน (ยากขึ้นแต่ไม่ใช่บอส)
+function spawnEncounter(){
   const level = Math.max(1, GameState.level);
   const isBoss = Math.random() < 0.12;
-  const tpl = isBoss ? BOSS_TEMPLATE : MONSTER_TEMPLATES[Math.floor(Math.random()*MONSTER_TEMPLATES.length)];
-  const hp = Math.round((40 + level*18) * tpl.hpMult);
-  const atk = Math.round((6 + level*2.4) * tpl.atkMult);
-  const def = Math.round((4 + level*1.6) * tpl.defMult);
-  const armor = Math.round(tpl.armorBase * (1 + level*0.06));
-  return { name:tpl.name, icon:tpl.icon, isBoss:!!tpl.isBoss, level, hp, maxHp:hp, atk, def, armor, maxArmor:armor };
+  if(isBoss) return [ spawnMonster(level, true) ];
+  const isPair = Math.random() < 0.28;
+  if(isPair){
+    // มอนสเตอร์คู่ตัวจะอ่อนลงเล็กน้อยเพื่อความสมดุล
+    const m1 = spawnMonster(level, false);
+    const m2 = spawnMonster(level, false);
+    [m1, m2].forEach(m=>{
+      m.hp = Math.max(1, Math.round(m.hp*0.78)); m.maxHp = m.hp;
+      m.atk = Math.round(m.atk*0.85);
+      m.armor = Math.round(m.armor*0.8); m.maxArmor = m.armor;
+    });
+    return [m1, m2];
+  }
+  return [ spawnMonster(level, false) ];
 }
 
 let CombatState = null;
@@ -1882,18 +1951,34 @@ function cbtLog(type, msg){
   CombatState.log = CombatState.log.slice(0, 30);
 }
 
+function cbtAliveMonsters(){
+  return CombatState ? CombatState.monsters.filter(m=>m.hp>0) : [];
+}
+function cbtPrimaryTarget(){
+  return cbtAliveMonsters()[0] || null;
+}
+
 function startCombat(){
   if(!GameState.character.locked){ showToast('เลือกคลาสตัวละครก่อน'); return; }
   recomputeStats();
   if(GameState.currentHp <= 0){ GameState.currentHp = Math.max(1, Math.round(GameState.stats.hp*0.3)); }
+  const monsters = spawnEncounter();
   CombatState = {
-    monster: spawnMonster(),
+    monsters,
     playerDefending:false,
     guardianReflectArmed:false,
     log: [],
-    over:false
+    over:false,
+    combo:{ streak:0 },
+    ultimate:{ meter:0, ready:false, used:false },
+    fx:[] // คำสั่งเอฟเฟกต์ (ตัวเลขดาเมจลอย/สั่นจอ/แฟลช) ที่รอเล่นตอน render ครั้งถัดไป
   };
-  cbtLog('info', `${CombatState.monster.icon} ${CombatState.monster.name}${CombatState.monster.isBoss?' (บอส!)':''} ปรากฏตัวขวางทาง!`);
+  if(monsters.length > 1){
+    cbtLog('info', `👥 มอนสเตอร์ ${monsters.length} ตัวปรากฏตัวพร้อมกัน! ${monsters.map(m=>m.icon+' '+m.name).join(' และ ')}`);
+  } else {
+    const mon = monsters[0];
+    cbtLog('info', `${mon.icon} ${mon.name}${mon.isBoss?' (บอส!)':''} ปรากฏตัวขวางทาง!`);
+  }
   document.getElementById('screen-main').classList.remove('active');
   document.getElementById('screen-combat').classList.add('active');
   renderCombatModal();
@@ -1907,12 +1992,36 @@ function closeCombat(){
   renderAll();
 }
 
+// สุ่มคริติคอลจากค่า critRate/critDmg ของผู้เล่น แล้วคืนค่า {dmg, isCrit}
+function cbtRollCrit(baseDmg, stats){
+  const critRate = Math.min(90, stats.critRate || 5);
+  const isCrit = Math.random()*100 < critRate;
+  if(!isCrit) return { dmg: Math.max(1, Math.round(baseDmg)), isCrit:false };
+  const mult = 1 + Math.max(0, (stats.critDmg || 150) - 100)/100;
+  return { dmg: Math.max(1, Math.round(baseDmg*mult)), isCrit:true };
+}
+
+function cbtGainUltimate(amount){
+  if(!CombatState || CombatState.ultimate.used) return;
+  const u = CombatState.ultimate;
+  u.meter = Math.min(CBT_ULT_MAX, u.meter + amount);
+  if(u.meter >= CBT_ULT_MAX) u.ready = true;
+}
+
+// เอฟเฟกต์ที่จะเล่นตอน render: ตัวเลขดาเมจลอย + สั่นจอ/แฟลชเมื่อคริติคอลหรือโดนตี
+function cbtQueueFx(targetKey, text, kind, shake){
+  if(!CombatState) return;
+  CombatState.fx.push({ targetKey, text, kind, shake:!!shake });
+}
+
 function playerCombatMove(moveId){
   if(!CombatState || CombatState.over) return;
   const cls = CLASS_DEFS[GameState.character.classId];
-  const mon = CombatState.monster;
+  const target = cbtPrimaryTarget();
+  if(!target && moveId !== 'defend'){ return; }
   recomputeStats();
   const stats = GameState.stats;
+  const wasDefending = CombatState.playerDefending;
   CombatState.playerDefending = false;
   CombatState.guardianReflectArmed = false;
 
@@ -1920,90 +2029,159 @@ function playerCombatMove(moveId){
     if(GameState.currentMp < CBT_LIGHT_MP){ showToast('พลังเวทไม่พอ'); return; }
     GameState.currentMp -= CBT_LIGHT_MP;
     SFX.attackLight();
-    const dmg = Math.max(1, Math.round(stats.atk*0.55 - mon.def*0.2));
+    const base = Math.max(1, stats.atk*0.55 - target.def*0.2);
+    const { dmg, isCrit } = cbtRollCrit(base, stats);
     const armorDown = Math.round(stats.atk*0.4) + 10;
-    mon.armor = Math.max(0, mon.armor - armorDown);
-    mon.hp = Math.max(0, mon.hp - dmg);
-    cbtLog('hit', `โจมตีเบา! สร้างดาเมจ ${dmg} และลดเกราะศัตรูลง ${armorDown} (เกราะเหลือ ${mon.armor}/${mon.maxArmor})`);
+    target.armor = Math.max(0, target.armor - armorDown);
+    target.hp = Math.max(0, target.hp - dmg);
+    cbtGainUltimate(dmg*CBT_ULT_GAIN_ON_DEAL);
+    CombatState.combo.streak = Math.min(CBT_COMBO_MAX_STACK, CombatState.combo.streak + 1);
+    cbtQueueFx('mon0', dmg, isCrit?'crit':'', isCrit);
+    cbtLog('hit', `⚡ โจมตีเบา!${isCrit?' 💥คริติคอล!':''} สร้างดาเมจ ${dmg} และลดเกราะศัตรูลง ${armorDown} (เกราะเหลือ ${target.armor}/${target.maxArmor}) — คอมโบ x${CombatState.combo.streak}`);
   } else if(moveId === 'heavy'){
     if(GameState.currentMp < CBT_HEAVY_MP){ showToast('พลังเวทไม่พอ'); return; }
     GameState.currentMp -= CBT_HEAVY_MP;
     SFX.attackHeavy();
-    let dmg;
-    if(mon.armor > 0){
-      dmg = Math.max(1, Math.round(stats.atk*0.25));
-      cbtLog('hit', `ตีหนักโดนเกราะกั้นไว้ส่วนใหญ่! ดาเมจเหลือเพียง ${dmg}`);
+    const comboStack = CombatState.combo.streak;
+    const comboMult = 1 + comboStack*CBT_COMBO_BONUS_PER_STACK;
+    let base, isCrit, dmg;
+    if(target.armor > 0){
+      base = Math.max(1, stats.atk*0.25) * comboMult;
+      ({ dmg, isCrit } = cbtRollCrit(base, stats));
+      target.hp = Math.max(0, target.hp - dmg);
+      cbtGainUltimate(dmg*CBT_ULT_GAIN_ON_DEAL);
+      cbtQueueFx('mon0', dmg, isCrit?'crit':'', isCrit);
+      cbtLog('hit', `💥 ตีหนักโดนเกราะกั้นไว้ส่วนใหญ่! ดาเมจเหลือเพียง ${dmg}${comboStack>0?` (โบนัสคอมโบ x${comboStack} รวมอยู่แล้ว)`:''}`);
     } else {
-      dmg = Math.max(1, Math.round(stats.atk*1.9 - mon.def*0.3));
-      cbtLog('hit', `ตีหนักทะลวงจุดอ่อน! สร้างดาเมจ ${dmg}`);
+      base = Math.max(1, stats.atk*1.9 - target.def*0.3) * comboMult;
+      ({ dmg, isCrit } = cbtRollCrit(base, stats));
+      target.hp = Math.max(0, target.hp - dmg);
+      cbtGainUltimate(dmg*CBT_ULT_GAIN_ON_DEAL);
+      cbtQueueFx('mon0', dmg, isCrit?'crit':'', isCrit);
+      cbtLog('hit', `💥 ตีหนักทะลวงจุดอ่อน!${isCrit?' 🌟คริติคอล!':''} สร้างดาเมจ ${dmg}${comboStack>0?` (โบนัสคอมโบ +${Math.round(comboStack*CBT_COMBO_BONUS_PER_STACK*100)}%)`:''}`);
     }
-    mon.hp = Math.max(0, mon.hp - dmg);
+    CombatState.combo.streak = 0;
   } else if(moveId === 'defend'){
     CombatState.playerDefending = true;
     SFX.defend();
     GameState.currentMp = Math.min(stats.mp, GameState.currentMp + CBT_DEFEND_MP_GAIN);
-    cbtLog('info', `ตั้งท่าป้องกัน เตรียมลดความเสียหายจากการโจมตีครั้งถัดไป และรวบรวมสมาธิฟื้นฟูพลังเวท +${CBT_DEFEND_MP_GAIN}`);
+    cbtLog('info', `🛡️ ตั้งท่าป้องกัน เตรียมลดความเสียหายจากการโจมตีครั้งถัดไป และรวบรวมสมาธิฟื้นฟูพลังเวท +${CBT_DEFEND_MP_GAIN}`);
   } else if(moveId === 'ability'){
     SFX.ability();
     if(cls.id === 'warrior'){
       if(GameState.currentHp <= 10){ showToast('เลือดน้อยเกินกว่าจะใช้ท่านี้'); return; }
       const dmg = Math.round(GameState.currentHp * 0.5);
       const cost = Math.round(GameState.currentHp * 0.5);
-      mon.hp = Math.max(0, mon.hp - dmg);
+      target.hp = Math.max(0, target.hp - dmg);
       GameState.currentHp = Math.max(1, GameState.currentHp - cost);
-      cbtLog('hit', `ท่าตีแลกเลือด! สร้างดาเมจจริง ${dmg} ใส่ศัตรู (เพิกเฉยเกราะ) และเสียเลือดตัวเองไป ${cost}`);
+      cbtGainUltimate(dmg*CBT_ULT_GAIN_ON_DEAL);
+      cbtQueueFx('mon0', dmg, '', false);
+      cbtLog('hit', `🩸 ท่าตีแลกเลือด! สร้างดาเมจจริง ${dmg} ใส่ศัตรู (เพิกเฉยเกราะ) และเสียเลือดตัวเองไป ${cost}`);
     } else if(cls.id === 'archer'){
       if(GameState.currentMp < CBT_ARCHER_HEAL_MP){ showToast('พลังเวทไม่พอ'); return; }
       GameState.currentMp -= CBT_ARCHER_HEAL_MP;
       const heal = Math.round(stats.hp * 0.25);
       GameState.currentHp = Math.min(stats.hp, GameState.currentHp + heal);
-      cbtLog('heal', `ฟื้นฟูชีพจร! ฟื้นฟูพลังชีวิต ${heal}`);
+      cbtQueueFx('player', heal, 'heal', false);
+      cbtLog('heal', `💚 ฟื้นฟูชีพจร! ฟื้นฟูพลังชีวิต ${heal}`);
     } else if(cls.id === 'guardian'){
       if(GameState.currentMp < CBT_GUARDIAN_ABILITY_MP){ showToast('พลังเวทไม่พอ'); return; }
       GameState.currentMp -= CBT_GUARDIAN_ABILITY_MP;
       CombatState.guardianReflectArmed = true;
-      cbtLog('info', 'ตั้งท่าสะท้อนสัมบูรณ์! พร้อมสะท้อนความเสียหายกลับใส่ศัตรูในตาถัดไป');
+      cbtLog('info', '🛡️ ตั้งท่าสะท้อนสัมบูรณ์! พร้อมสะท้อนความเสียหายกลับใส่ศัตรูในตาถัดไป');
+    }
+  } else if(moveId === 'ultimate'){
+    if(!CombatState.ultimate.ready || CombatState.ultimate.used){ return; }
+    CombatState.ultimate.used = true;
+    CombatState.ultimate.ready = false;
+    CombatState.ultimate.meter = 0;
+    SFX.victoryFanfare();
+    if(cls.id === 'warrior'){
+      const base = stats.atk*3.2 - target.def*0.3; // ท่าไม้ตายแรงกว่าท่าประจำคลาสเดิม แต่ไม่แลกเลือดตัวเอง
+      const { dmg, isCrit } = cbtRollCrit(base, stats);
+      target.hp = Math.max(0, target.hp - dmg);
+      cbtQueueFx('mon0', dmg, 'ult', true);
+      cbtLog('hit', `🌟 อัลติเมท: ฟันสายฟ้าปีศาจ! สร้างดาเมจมหาศาล ${dmg}${isCrit?' 💥คริติคอล!':''} (เพิกเฉยเกราะ)`);
+    } else if(cls.id === 'archer'){
+      const heal = Math.round(stats.hp * 0.35);
+      GameState.currentHp = Math.min(stats.hp, GameState.currentHp + heal);
+      const base = stats.atk*2.0 - target.def*0.2;
+      const { dmg, isCrit } = cbtRollCrit(base, stats);
+      target.hp = Math.max(0, target.hp - dmg);
+      cbtQueueFx('player', heal, 'heal', false);
+      cbtQueueFx('mon0', dmg, 'ult', true);
+      cbtLog('hit', `🌟 อัลติเมท: ยิงธนูสายฟ้า! ฟื้นฟูพลังชีวิต ${heal} และยิงดาเมจ ${dmg}${isCrit?' 🌟คริติคอล!':''} ใส่ศัตรู`);
+    } else if(cls.id === 'guardian'){
+      // ท่าไม้ตายการ์เดียน: ระเบิดดาเมจรอบตัว โดนทุกตัวที่ยังไม่ตาย ลดเลือดลง 50% ของเลือดสูงสุดเสมอ (เพิกเฉยเกราะ)
+      const monsters = cbtAliveMonsters();
+      let totalDmg = 0;
+      monsters.forEach((m, i)=>{
+        const dmg = Math.max(1, Math.round(m.maxHp*0.5));
+        m.hp = Math.max(0, m.hp - dmg);
+        totalDmg += dmg;
+        const key = CombatState.monsters.indexOf(m) === 0 ? 'mon0' : 'mon1';
+        cbtQueueFx(key, dmg, 'ult', true);
+      });
+      cbtLog('hit', `🌟 อัลติเมท: ระเบิดพิทักษ์รอบทิศ! สร้างดาเมจให้ศัตรูทุกตัวลดลง 50% ของเลือดสูงสุด (รวม ${totalDmg} ดาเมจ ไม่สนเกราะ)`);
     }
   }
 
+  const anyDefeated = cbtAliveMonsters().length === 0;
   saveGame();
-  if(mon.hp <= 0){ finishCombat(true); return; }
+  if(anyDefeated){ finishCombat(true); return; }
   renderCombatModal();
   setTimeout(enemyCombatTurn, 550);
 }
 
-// ตาศัตรู: คำนวณดาเมจปกติ / เงื่อนไขพิเศษของท่าป้องกันมีโบนัสลับผูกกับ DEF ผู้เล่น (ไม่เปิดเผยสูตรใน UI)
+// ตาศัตรู: มอนสเตอร์ทุกตัวที่ยังไม่ตายจะโจมตีทีละตัว / ท่าป้องกันมีโบนัสลับผูกกับ DEF ผู้เล่น (ไม่เปิดเผยสูตรใน UI)
 function enemyCombatTurn(){
   if(!CombatState || CombatState.over) return;
-  const mon = CombatState.monster;
   recomputeStats();
   const stats = GameState.stats;
-  let dmg = Math.max(1, Math.round(mon.atk - stats.def*0.5));
+  const attackers = cbtAliveMonsters();
+  let comboBroken = false;
 
-  if(CombatState.guardianReflectArmed){
-    const reflectPct = mon.level <= GameState.level ? 1.0 : 0.5;
-    const reflectDmg = Math.round(dmg * reflectPct);
-    mon.hp = Math.max(0, mon.hp - reflectDmg);
-    SFX.attackHeavy();
-    cbtLog('hit', `สะท้อนสัมบูรณ์! สะท้อนดาเมจ ${reflectDmg} กลับใส่ศัตรู (ไม่ได้รับความเสียหาย)`);
-  } else if(CombatState.playerDefending){
-    const hiddenDefBonus = Math.min(35, Math.floor(stats.def/4));
-    const reducePct = Math.min(90, 50 + hiddenDefBonus);
-    dmg = Math.max(0, Math.round(dmg * (1 - reducePct/100)));
-    GameState.currentHp = Math.max(0, GameState.currentHp - dmg);
-    SFX.defend();
-    cbtLog('hit', `ป้องกันสำเร็จ! ได้รับความเสียหายเพียง ${dmg}`);
-  } else {
-    GameState.currentHp = Math.max(0, GameState.currentHp - dmg);
-    SFX.enemyHit();
-    cbtLog('hit', `${mon.name}โจมตี! ได้รับความเสียหาย ${dmg}`);
+  attackers.forEach((mon, idx)=>{
+    if(GameState.currentHp <= 0) return; // ผู้เล่นล้มแล้วไม่ต้องตีต่อ
+    let dmg = Math.max(1, Math.round(mon.atk - stats.def*0.5));
+    const key = CombatState.monsters.indexOf(mon) === 0 ? 'mon0' : 'mon1';
+
+    if(CombatState.guardianReflectArmed){
+      const reflectPct = mon.level <= GameState.level ? 1.0 : 0.5;
+      const reflectDmg = Math.round(dmg * reflectPct);
+      mon.hp = Math.max(0, mon.hp - reflectDmg);
+      SFX.attackHeavy();
+      cbtQueueFx(key, reflectDmg, 'crit', true);
+      cbtLog('hit', `🛡️ สะท้อนสัมบูรณ์! สะท้อนดาเมจ ${reflectDmg} กลับใส่ ${mon.name} (ไม่ได้รับความเสียหาย)`);
+    } else if(CombatState.playerDefending){
+      const hiddenDefBonus = Math.min(35, Math.floor(stats.def/4));
+      const reducePct = Math.min(90, 50 + hiddenDefBonus);
+      dmg = Math.max(0, Math.round(dmg * (1 - reducePct/100)));
+      GameState.currentHp = Math.max(0, GameState.currentHp - dmg);
+      SFX.defend();
+      cbtGainUltimate(dmg*CBT_ULT_GAIN_ON_TAKEN);
+      cbtQueueFx('player', dmg, '', false);
+      cbtLog('hit', `🛡️ ป้องกันสำเร็จ! ได้รับความเสียหายจาก ${mon.name} เพียง ${dmg}`);
+    } else {
+      GameState.currentHp = Math.max(0, GameState.currentHp - dmg);
+      SFX.enemyHit();
+      cbtGainUltimate(dmg*CBT_ULT_GAIN_ON_TAKEN);
+      cbtQueueFx('player', dmg, 'crit', true);
+      cbtLog('hit', `${mon.icon} ${mon.name}โจมตี! ได้รับความเสียหาย ${dmg}`);
+      if(dmg > 0) comboBroken = true; // โดนตีจริง → คอมโบขาด
+    }
+  });
+
+  if(comboBroken && CombatState.combo.streak > 0){
+    cbtLog('info', `💔 คอมโบขาด! (สะสมไว้ ${CombatState.combo.streak} สเต็ป)`);
+    CombatState.combo.streak = 0;
   }
 
   CombatState.playerDefending = false;
   CombatState.guardianReflectArmed = false;
   saveGame();
 
-  if(mon.hp <= 0){ finishCombat(true); return; }
+  if(cbtAliveMonsters().length === 0){ finishCombat(true); return; }
   if(GameState.currentHp <= 0){ finishCombat(false); return; }
   renderCombatModal();
 }
@@ -2023,20 +2201,61 @@ function finishCombat(won){
   renderCombatModal();
 }
 
+// เล่นเอฟเฟกต์ที่ค้างอยู่ใน CombatState.fx: ตัวเลขดาเมจลอย + สั่นจอ/แฟลชสีตอนคริติคอล
+function cbtPlayQueuedFx(box){
+  if(!CombatState || !CombatState.fx || !CombatState.fx.length) return;
+  const fx = CombatState.fx.splice(0, CombatState.fx.length);
+  let shouldShake = false;
+  fx.forEach((f, i)=>{
+    const targetEl = box.querySelector(`[data-fxtarget="${f.targetKey}"]`);
+    if(!targetEl) return;
+    const num = document.createElement('div');
+    num.className = 'cbt-dmg-num' + (f.kind ? ' '+f.kind : '');
+    num.style.left = (46 + (Math.random()*16-8)) + '%';
+    num.style.top = (34 + i*10) + '%';
+    num.textContent = (f.kind==='heal' ? '+' : '-') + f.text;
+    targetEl.appendChild(num);
+    setTimeout(()=>{ num.remove(); }, 1000);
+    if(f.shake) shouldShake = true;
+  });
+  if(shouldShake){
+    box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
+    const flash = box.querySelector('.cbt-flash');
+    if(flash){ flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go'); }
+  }
+}
+
+function cbtRenderMonsterSide(mon, key){
+  const hpPct = Math.max(0, Math.min(100, (mon.hp/mon.maxHp)*100));
+  const armorPct = mon.maxArmor > 0 ? Math.max(0, Math.min(100, (mon.armor/mon.maxArmor)*100)) : 0;
+  const dead = mon.hp <= 0;
+  return `
+    <div class="cbt-side" data-fxtarget="${key}" style="${dead?'opacity:.35;':''}">
+      <div class="cbt-icon">${mon.icon}</div>
+      <div class="cbt-name">${mon.name}${mon.isBoss?' 👑':''}</div>
+      <div class="cbt-bar-track"><div class="cbt-bar-fill" style="width:${hpPct}%"></div></div>
+      <div class="cbt-bar-text">HP ${mon.hp}/${mon.maxHp}</div>
+      <div class="cbt-armor">🛡️ เกราะ ${mon.armor}/${mon.maxArmor}</div>
+      ${dead?'<div style="font-size:9px;color:var(--danger);">ล้มแล้ว</div>':''}
+    </div>`;
+}
+
 function renderCombatModal(){
   const box = document.getElementById('combat-modal-box');
   if(!box || !CombatState) return;
-  const mon = CombatState.monster;
   const cls = CLASS_DEFS[GameState.character.classId];
   const hpPct = Math.max(0, Math.min(100, (GameState.currentHp/GameState.stats.hp)*100));
   const mpPct = Math.max(0, Math.min(100, (GameState.currentMp/GameState.stats.mp)*100));
-  const monHpPct = Math.max(0, Math.min(100, (mon.hp/mon.maxHp)*100));
-  const monArmorPct = mon.maxArmor > 0 ? Math.max(0, Math.min(100, (mon.armor/mon.maxArmor)*100)) : 0;
+  const combo = CombatState.combo;
+  const ult = CombatState.ultimate;
+  const ultPct = Math.max(0, Math.min(100, (ult.meter/CBT_ULT_MAX)*100));
+  const monsterSides = CombatState.monsters.map((m,i)=> cbtRenderMonsterSide(m, i===0?'mon0':'mon1')).join('');
 
   box.innerHTML = `
+    <div class="cbt-flash"></div>
     <div class="mtitle">⚔️ การต่อสู้</div>
     <div class="cbt-vs-row">
-      <div class="cbt-side">
+      <div class="cbt-side" data-fxtarget="player">
         <div class="cbt-icon">${cls.icon}</div>
         <div class="cbt-name">${GameState.character.name}</div>
         <div class="cbt-bar-track"><div class="cbt-bar-fill" style="width:${hpPct}%"></div></div>
@@ -2045,26 +2264,34 @@ function renderCombatModal(){
         <div class="cbt-bar-text">MP ${GameState.currentMp}/${GameState.stats.mp}</div>
       </div>
       <div style="padding:0 8px; color:var(--text-dim); font-size:16px;">VS</div>
-      <div class="cbt-side">
-        <div class="cbt-icon">${mon.icon}</div>
-        <div class="cbt-name">${mon.name}${mon.isBoss?' 👑':''}</div>
-        <div class="cbt-bar-track"><div class="cbt-bar-fill" style="width:${monHpPct}%"></div></div>
-        <div class="cbt-bar-text">HP ${mon.hp}/${mon.maxHp}</div>
-        <div class="cbt-armor">🛡️ เกราะ ${mon.armor}/${mon.maxArmor}</div>
+      ${monsterSides}
+    </div>
+
+    <div class="cbt-status-row">
+      <div class="cbt-combo-box ${combo.streak>0?'active':''}">
+        <span>คอมโบ</span>
+        <div class="cbt-combo-dots">
+          ${Array.from({length:CBT_COMBO_MAX_STACK}).map((_,i)=>`<div class="cbt-combo-dot ${i<combo.streak?'filled':''}"></div>`).join('')}
+        </div>
+      </div>
+      <div class="cbt-ult-box">
+        <div class="cbt-ult-track"><div class="cbt-ult-fill ${ult.ready?'ready':''}" style="width:${ultPct}%"></div></div>
+        <div class="cbt-ult-text">${ult.used ? 'ใช้ท่าไม้ตายไปแล้ว' : (ult.ready ? '🌟 อัลติเมทพร้อมใช้!' : `พลังอัลติเมท ${Math.floor(ultPct)}%`)}</div>
       </div>
     </div>
 
     <div class="cbt-log">${CombatState.log.map(l=>`<div class="l-${l.type}">${l.msg}</div>`).join('')}</div>
 
     ${CombatState.over ? `
-      <div class="cbt-result ${GameState.currentHp>0 && mon.hp<=0 ? 'win':'lose'}">${mon.hp<=0 ? '🎉 ชัยชนะ!' : '💀 พ่ายแพ้'}</div>
+      <div class="cbt-result ${GameState.currentHp>0 ? 'win':'lose'}">${GameState.currentHp>0 ? '🎉 ชัยชนะ!' : '💀 พ่ายแพ้'}</div>
       <button class="pixel-btn primary" id="btn-close-combat" style="width:100%;">ออกจากการต่อสู้</button>
     ` : `
       <div class="cbt-moves">
-        <button class="pixel-btn small" id="mv-light">⚡ โจมตีเบา (${CBT_LIGHT_MP} MP)<br><span style="opacity:.7">ลดเกราะศัตรู</span></button>
-        <button class="pixel-btn small" id="mv-heavy">💥 โจมตีหนัก (${CBT_HEAVY_MP} MP)<br><span style="opacity:.7">แรงเมื่อไร้เกราะ</span></button>
+        <button class="pixel-btn small" id="mv-light">⚡ โจมตีเบา (${CBT_LIGHT_MP} MP)<br><span style="opacity:.7">ลดเกราะ + สะสมคอมโบ</span></button>
+        <button class="pixel-btn small" id="mv-heavy">💥 โจมตีหนัก (${CBT_HEAVY_MP} MP)<br><span style="opacity:.7">แรงขึ้นตามคอมโบ</span></button>
         <button class="pixel-btn small" id="mv-defend">🛡️ ป้องกัน<br><span style="opacity:.7">ลดดาเมจ + พลังเวท+${CBT_DEFEND_MP_GAIN}</span></button>
         <button class="pixel-btn small primary" id="mv-ability">✨ ${cls.ability ? cls.ability.name : 'ท่าประจำตัว'}</button>
+        ${ult.ready && !ult.used ? `<button class="pixel-btn small" id="mv-ultimate" style="grid-column:1/3; background:linear-gradient(180deg,#ffe08a,#f2b134); border-color:#fff2c4; color:#2a1a04;">🌟 ปลดท่าไม้ตาย! (ใช้ได้ครั้งเดียวต่อไฟต์)</button>` : ''}
       </div>
     `}
   `;
@@ -2076,7 +2303,10 @@ function renderCombatModal(){
     document.getElementById('mv-heavy').addEventListener('click', ()=> playerCombatMove('heavy'));
     document.getElementById('mv-defend').addEventListener('click', ()=> playerCombatMove('defend'));
     document.getElementById('mv-ability').addEventListener('click', ()=> playerCombatMove('ability'));
+    const ultBtn = document.getElementById('mv-ultimate');
+    if(ultBtn) ultBtn.addEventListener('click', ()=> playerCombatMove('ultimate'));
   }
+  cbtPlayQueuedFx(box);
 }
 
 /* ---------------- Init ---------------- */
