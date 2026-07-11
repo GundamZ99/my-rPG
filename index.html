@@ -2198,7 +2198,12 @@ function finishCombat(won){
   CombatState.over = true;
   if(won){
     SFX.victoryFanfare();
-    cbtLog('info', '🎉 ชนะการต่อสู้! (การต่อสู้ทดสอบนี้ไม่ให้รางวัลใดๆ — ต้องการไอเทมให้ไปตะลุยดันเจี้ยน)');
+    if(CombatState.isDungeon){
+      cbtLog('info', '🎉 ชนะการต่อสู้ในดันเจี้ยน!');
+      grantDungeonRewards(CombatState.dungeonWindow);
+    } else {
+      cbtLog('info', '🎉 ชนะการต่อสู้! (การต่อสู้ทดสอบนี้ไม่ให้รางวัลใดๆ — ต้องการไอเทมให้ไปตะลุยดันเจี้ยน)');
+    }
   } else {
     SFX.defeatTone();
     GameState.currentHp = Math.max(1, Math.round(GameState.stats.hp*0.2));
@@ -2391,4 +2396,4 @@ function initGame(){
 window.addEventListener('DOMContentLoaded', initGame);
 </script>
 </body>
-</html>
+</html> 
