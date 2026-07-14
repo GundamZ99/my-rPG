@@ -1,0 +1,1 @@
+﻿const fs=require('fs');const html=fs.readFileSync('C:/Users/kasid/Downloads/index_2_1_1.html','utf8');const b64=html.split('BOSS_MODEL_B64 = ')[1].split(';')[0].replace(/'|\x22/g, '').trim();const buf=Buffer.from(b64,'base64');const jsonLen=buf.readUInt32LE(12);const jsonStr=buf.toString('utf8',20,20+jsonLen);const json=JSON.parse(jsonStr);console.log(Object.keys(json));
